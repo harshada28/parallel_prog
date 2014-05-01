@@ -12,10 +12,10 @@
    The basic ideas are as follows:
 
    1) Figure out the interior and border of the source image
-   2) Use the values of the border pixels in the destination image 
+   2) Use the values of the border pixels in the destination image
       as boundary conditions for solving a Poisson equation that tells
       us how to blend the images.
-   
+
       No pixels from the destination except pixels on the border
       are used to compute the match.
 
@@ -28,7 +28,7 @@
    until it stops changing.  If the problem was well-suited for the method
    then it will stop and where it stops will be the solution.
 
-   The Jacobi method is the simplest iterative method and converges slowly - 
+   The Jacobi method is the simplest iterative method and converges slowly -
    that is we need a lot of iterations to get to the answer, but it is the
    easiest method to write.
 
@@ -84,7 +84,7 @@ void computeMask(uchar4* d_sourceImage, unsigned char *d_mask, int numRows, int 
 }
 
 __global__
-void seperateChannels(uchar4 *d_sourceImg, unsigned char *d_RSrc, unsigned char *d_GSrc, 
+void seperateChannels(uchar4 *d_sourceImg, unsigned char *d_RSrc, unsigned char *d_GSrc,
                       unsigned char *d_BSrc,
                       size_t size)
 {
@@ -100,16 +100,16 @@ void seperateChannels(uchar4 *d_sourceImg, unsigned char *d_RSrc, unsigned char 
 }
 
 __global__
-void computeBoundary(unsigned char *d_mask, unsigned char *d_borderPixels, 
+void computeBoundary(unsigned char *d_mask, unsigned char *d_borderPixels,
                      unsigned char *d_interiorPixels,
                      int numRows, int numCols)
 {
     const int2 coord =  make_int2(blockIdx.x * blockDim.x + threadIdx.x,
                                    blockIdx.y * blockDim.y + threadIdx.y);
     if (coord.x >= numRows-1 || coord.y >= numCols-1
-        || coord.x <= 0 || coord.y <=0)    
+        || coord.x <= 0 || coord.y <=0)
         return;
-    
+
 
     const int tId = coord.x * numCols + coord.y;
     const int r = blockIdx.x * blockDim.x + threadIdx.x;
@@ -120,7 +120,7 @@ void computeBoundary(unsigned char *d_mask, unsigned char *d_borderPixels,
             d_mask[r * numCols + c - 1] && d_mask[r * numCols + c + 1])
         {
             d_borderPixels[tId] = 0;
-            d_interiorPixels[tId] = 1;            
+            d_interiorPixels[tId] = 1;
         }
         else
         {
@@ -128,16 +128,16 @@ void computeBoundary(unsigned char *d_mask, unsigned char *d_borderPixels,
             d_interiorPixels[tId] = 0;
         }
     }
-    
+
 }
-  
+
 
 __global__
-void initBufs(const uchar4 * const d_sourceImg, float *d_RedBuf, 
+void initBufs(const uchar4 * const d_sourceImg, float *d_RedBuf,
               float *d_GreenBuf, float *d_BlueBuf, size_t srcSize)
 {
     int tId = blockIdx.x * blockDim.x + threadIdx.x;
-    
+
     if (tId > srcSize)
         return;
 
@@ -145,12 +145,12 @@ void initBufs(const uchar4 * const d_sourceImg, float *d_RedBuf,
   d_RedBuf[tId] = p.x;
   d_GreenBuf[tId] = p.y;
   d_BlueBuf[tId] = p.z;
-  
+
 }
 
 __global__
 void computeIteration(unsigned char* d_interiorPixels, unsigned char *d_destImg,
-                      float *d_buf1, float *d_buf2, float *g, 
+                      float *d_buf1, float *d_buf2, float *g,
                       int numRows, int numCols)
 {
     int tId = blockIdx.x * blockDim.x + threadIdx.x;
@@ -158,31 +158,31 @@ void computeIteration(unsigned char* d_interiorPixels, unsigned char *d_destImg,
         return;
     float blended_sum = 0.f;
     float border_sum = 0.f;
-    
+
     if (d_interiorPixels[tId])
     {
         if (d_interiorPixels[tId + 1])
             blended_sum += d_buf1[tId + 1];
         else
             border_sum += d_destImg[tId + 1];
-        
+
         if (d_interiorPixels[tId - 1])
             blended_sum += d_buf1[tId - 1];
         else
             border_sum += d_destImg[tId - 1];
-        
+
         if (d_interiorPixels[tId - numCols])
             blended_sum += d_buf1[tId - numCols];
         else
             border_sum += d_destImg[tId - numCols];
-        
+
         if (d_interiorPixels[tId + numCols])
             blended_sum += d_buf1[tId + numCols];
         else
-            border_sum += d_destImg[tId + numCols];              
+            border_sum += d_destImg[tId + numCols];
     }
     float f_next_val = (blended_sum + border_sum + g[tId]) / 4.f;
-    d_buf2[tId] = min(255.f, max(0.f, f_next_val)); //clip to 
+    d_buf2[tId] = min(255.f, max(0.f, f_next_val)); //clip to
 
 }
 
@@ -193,7 +193,7 @@ void computeG(unsigned char *d_channel, float *d_G, unsigned char*d_interiorPixe
     int offset = blockIdx.x * blockDim.x + threadIdx.x;
     if ((offset >= numRows * numCols) || (!d_interiorPixel[offset]))
         return;
-        
+
     float sum = 4.f * d_channel[offset];
 
     sum -= (float)d_channel[offset - 1] + (float)d_channel[offset + 1];
@@ -208,26 +208,26 @@ void swapBufs(float *d_buf1, float *d_buf2, int size)
     int tId = blockIdx.x * blockDim.x + threadIdx.x;
     if (tId >= size)
         return;
-    
+
     float t = d_buf1[tId];
     d_buf1[tId] = d_buf2[tId];
     d_buf2[tId] = t;
 }
 
 __global__
-void blendImages(uchar4 *d_destImg, unsigned char *d_interiorPixels, 
+void blendImages(uchar4 *d_destImg, unsigned char *d_interiorPixels,
                  float *d_RedBuf, float *d_GreenBuf, float *d_BlueBuf, int srcSize)
 {
     int tId = blockIdx.x * blockDim.x + threadIdx.x;
     if ((tId >= srcSize) || (!d_interiorPixels[tId]))
         return;
-    
+
     d_destImg[tId].x = d_RedBuf[tId];
     d_destImg[tId].y = d_GreenBuf[tId];
     d_destImg[tId].z = d_BlueBuf[tId];
 
 }
-        
+
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
@@ -236,7 +236,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 {
 
   printf("%d %d\n", numRowsSource, numColsSource);
-    
+
 
   uchar4 *d_sourceImg, *d_destImg;
   unsigned char* d_mask;
@@ -245,40 +245,40 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   unsigned char *d_borderPixels, *d_interiorPixels;
   float *d_RedBuf1, *d_RedBuf2, *d_GreenBuf1, *d_GreenBuf2, *d_BlueBuf1, *d_BlueBuf2;
   float *d_gRed, *d_gGreen, *d_gBlue;
-    
+
   size_t srcSize = numRowsSource * numColsSource;
 
   checkCudaErrors(cudaMalloc((void **)&d_sourceImg, sizeof(uchar4) * srcSize));
   checkCudaErrors(cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * srcSize,
                             cudaMemcpyHostToDevice));
-    
+
   checkCudaErrors(cudaMalloc((void **)&d_destImg, sizeof(uchar4) * srcSize));
   checkCudaErrors(cudaMemcpy(d_destImg, h_destImg, sizeof(uchar4) * srcSize,
                             cudaMemcpyHostToDevice));
-  
+
 
   { //step 1: compute Mask
   checkCudaErrors(cudaMalloc((void **)&d_mask, sizeof(unsigned char) * srcSize));
   checkCudaErrors(cudaMemset(d_mask, 0, sizeof(unsigned char) * srcSize));
-  
+
   dim3 blockSize(1024, 1, 1);
   dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
   computeMask<<<gridSize, blockSize>>>(d_sourceImg, d_mask, numRowsSource, numColsSource);
   }
-  
+
   { //step2: compute interior and border pixels
   checkCudaErrors(cudaMalloc((void **)&d_borderPixels, sizeof(unsigned char) * srcSize));
   checkCudaErrors(cudaMemset(d_borderPixels, 0, sizeof(unsigned char) * srcSize));
 
   checkCudaErrors(cudaMalloc((void **)&d_interiorPixels, sizeof(unsigned char) * srcSize));
   checkCudaErrors(cudaMemset(d_interiorPixels, 0, sizeof(unsigned char) * srcSize));
-    
+
   dim3 blockSize(32, 32, 1);
   dim3 gridSize((numRowsSource + 32 - 1)/32, (numColsSource + 32 - 1)/32, 1);
   computeBoundary<<<gridSize, blockSize>>>(d_mask, d_borderPixels, d_interiorPixels,
                                            numRowsSource, numColsSource);
-  checkCudaErrors(cudaGetLastError()); 
-  }   
+  checkCudaErrors(cudaGetLastError());
+  }
 
   { //step 3: separate channels
   checkCudaErrors(cudaMalloc((void **)&d_RSrc, sizeof(unsigned char) * srcSize));
@@ -287,28 +287,28 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
   dim3 blockSize(1024, 1, 1);
   dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
-  
+
   seperateChannels<<<gridSize, blockSize>>>(d_sourceImg, d_RSrc, d_GSrc, d_BSrc, srcSize);
   checkCudaErrors(cudaGetLastError());
-      
+
   checkCudaErrors(cudaMalloc((void **)&d_RDest, sizeof(unsigned char) * srcSize));
   checkCudaErrors(cudaMalloc((void **)&d_GDest, sizeof(unsigned char) * srcSize));
   checkCudaErrors(cudaMalloc((void **)&d_BDest, sizeof(unsigned char) * srcSize));
-  
+
   seperateChannels<<<gridSize, blockSize>>>(d_destImg, d_RDest, d_GDest, d_BDest, srcSize);
   checkCudaErrors(cudaGetLastError());
-  }  
-    
+  }
+
   {
-    //step 3': 
+    //step 3':
   checkCudaErrors(cudaMalloc((void **)&d_gRed, sizeof(float) * srcSize));
   checkCudaErrors(cudaMalloc((void **)&d_gGreen, sizeof(float) * srcSize));
   checkCudaErrors(cudaMalloc((void **)&d_gBlue, sizeof(float) * srcSize));
 
-  cudaMemset(d_gRed, 0, sizeof(float) * srcSize);    
+  cudaMemset(d_gRed, 0, sizeof(float) * srcSize);
   cudaMemset(d_gGreen, 0, sizeof(float) * srcSize);
   cudaMemset(d_gBlue, 0, sizeof(float) * srcSize);
-      
+
   dim3 blockSize(1024, 1, 1);
   dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
   computeG<<<gridSize, blockSize>>>(d_RSrc, d_gRed, d_interiorPixels,
@@ -317,67 +317,67 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                                     numRowsSource, numColsSource);
   computeG<<<gridSize, blockSize>>>(d_BSrc, d_gGreen, d_interiorPixels,
                                     numRowsSource, numColsSource);
-    
+
   }
-    
+
   { //step 4: allocate buffers
     checkCudaErrors(cudaMalloc((void **)&d_RedBuf1, sizeof(float)*srcSize));
     checkCudaErrors(cudaMalloc((void **)&d_RedBuf2, sizeof(float)*srcSize));
-      
+
     checkCudaErrors(cudaMalloc((void **)&d_GreenBuf1, sizeof(float)*srcSize));
     checkCudaErrors(cudaMalloc((void **)&d_GreenBuf2, sizeof(float)*srcSize));
-      
+
     checkCudaErrors(cudaMalloc((void **)&d_BlueBuf1, sizeof(float)*srcSize));
     checkCudaErrors(cudaMalloc((void **)&d_BlueBuf2, sizeof(float)*srcSize));
-    
+
 
     dim3 blockSize(1024, 1, 1);
     dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
-    initBufs<<<gridSize, blockSize>>>(d_sourceImg, d_RedBuf1, d_GreenBuf1, d_BlueBuf1, srcSize);  
-    initBufs<<<gridSize, blockSize>>>(d_sourceImg, d_RedBuf2, d_GreenBuf2, d_BlueBuf2, srcSize);  
-    checkCudaErrors(cudaGetLastError());   
+    initBufs<<<gridSize, blockSize>>>(d_sourceImg, d_RedBuf1, d_GreenBuf1, d_BlueBuf1, srcSize);
+    initBufs<<<gridSize, blockSize>>>(d_sourceImg, d_RedBuf2, d_GreenBuf2, d_BlueBuf2, srcSize);
+    checkCudaErrors(cudaGetLastError());
     }
-    
+
     {//step 5: Jacobi iterations
         dim3 blockSize(1024, 1, 1);
         dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
-    
+
         for (unsigned int i = 0; i < 800; i++)
         {
-            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_RDest, 
+            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_RDest,
                                                       d_RedBuf1, d_RedBuf2, d_gRed,
                                                       numRowsSource, numColsSource);
             swapBufs<<<gridSize, blockSize>>>(d_RedBuf1, d_RedBuf2, srcSize);
         }
-        
+
         for (unsigned int i = 0; i < 800; i++)
         {
-            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_GDest, 
+            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_GDest,
                                                       d_GreenBuf1, d_GreenBuf2, d_gGreen,
                                                       numRowsSource, numColsSource);
             swapBufs<<<gridSize, blockSize>>>(d_GreenBuf1, d_GreenBuf2, srcSize);
         }
         for (unsigned int i = 0; i < 800; i++)
         {
-            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_BDest, 
+            computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_BDest,
                                                       d_BlueBuf1, d_BlueBuf2, d_gBlue,
                                                       numRowsSource, numColsSource);
             swapBufs<<<gridSize, blockSize>>>(d_BlueBuf1, d_BlueBuf2, srcSize);
-        }            
+        }
     }
-    
+
     {
         //step 6: replace all interiors with above computed values.
         dim3 blockSize(1024, 1, 1);
         dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
         blendImages<<<gridSize, blockSize>>>(d_destImg, d_interiorPixels, d_RedBuf1,
                                              d_GreenBuf1, d_BlueBuf1, srcSize);
-        
+
         cudaMemcpy(h_blendedImg, d_destImg, sizeof(unsigned char) * srcSize,
                    cudaMemcpyDeviceToHost);
-        
+
     }
-    
+
 
   cudaFree(d_sourceImg);
   cudaFree(d_destImg);
@@ -386,16 +386,19 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   cudaFree(d_interiorPixels);
   cudaFree(d_RSrc);
   cudaFree(d_GSrc);
-  cudaFree(d_BSrc);                    
+  cudaFree(d_BSrc);
   cudaFree(d_RDest);
   cudaFree(d_GDest);
-  cudaFree(d_BDest);                      
+  cudaFree(d_BDest);
   cudaFree(d_RedBuf1);
-  cudaFree(d_RedBuf2);                   
+  cudaFree(d_RedBuf2);
   cudaFree(d_GreenBuf1);
   cudaFree(d_GreenBuf2);
   cudaFree(d_BlueBuf1);
-  cudaFree(d_BlueBuf2);    
+  cudaFree(d_BlueBuf2);
+  cudaFree(d_gRed);
+  cudaFree(d_gBlue);
+  cudaFree(d_gGreen);
 
 
   checkCudaErrors(cudaGetLastError());
