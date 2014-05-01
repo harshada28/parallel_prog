@@ -241,6 +241,50 @@ void compare_mask(unsigned char *source, const uchar4 *sourceImg, int srcSize)
     if (source[i] != dest[i])
       printf("Not matching \n");
   }
+}
+
+void compare_interior_border(unsigned char *cmp_interior, unsigned char *cmp_border, const uchar4 *sourceImg,
+                             int numColsSource, int numRowsSource)
+{
+  unsigned char *mask = new unsigned char[numColsSource * numRowsSource];
+  int srcSize = numColsSource * numRowsSource;
+  for (int i = 0; i < srcSize; ++i) {
+    mask[i] = (sourceImg[i].x + sourceImg[i].y + sourceImg[i].z < 3 * 255) ? 1 : 0;
+  }
+  unsigned char *borderPixels = new unsigned char[srcSize];
+  unsigned char *strictInteriorPixels = new unsigned char[srcSize];
+
+  std::vector<uint2> interiorPixelList;
+
+  for (size_t r = 1; r < numRowsSource - 1; ++r) {
+    for (size_t c = 1; c < numColsSource - 1; ++c) {
+      if (mask[r * numColsSource + c]) {
+        if (mask[(r -1) * numColsSource + c] && mask[(r + 1) * numColsSource + c] &&
+            mask[r * numColsSource + c - 1] && mask[r * numColsSource + c + 1]) {
+          strictInteriorPixels[r * numColsSource + c] = 1;
+          borderPixels[r * numColsSource + c] = 0;
+          interiorPixelList.push_back(make_uint2(r, c));
+        }
+        else {
+          strictInteriorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 1;
+        }
+      }
+      else {
+          strictInteriorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 0;
+
+      }
+    }
+ }
+
+    for (int i = 0; i < numRowsSource * numColsSource; i++)
+    {
+      if (strictInteriorPixels[i] != cmp_interior[i])
+          printf("Inter unmatched \n");
+      if (borderPixels[i] != cmp_border[i])
+          printf("Border unmatched \n");
+    }
 
 }
 #endif
@@ -300,6 +344,13 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   computeBoundary<<<gridSize, blockSize>>>(d_mask, d_borderPixels, d_interiorPixels,
                                            numRowsSource, numColsSource);
   checkCudaErrors(cudaGetLastError());
+#ifdef serial_code
+  unsigned char *cmp_interior = new unsigned char[srcSize];
+  unsigned char *cmp_border = new unsigned char[srcSize];
+  cudaMemcpy(cmp_interior, d_interiorPixels, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  cudaMemcpy(cmp_border, d_borderPixels, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  compare_interior_border(cmp_interior, cmp_border, h_sourceImg, numColsSource, numRowsSource);
+#endif
   }
 
   { //step 3: separate channels
