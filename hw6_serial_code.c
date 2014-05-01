@@ -33,3 +33,50 @@
   
 #endif
 
+#ifdef serial
+void computeMask_Serial(const uchar4 * const h_sourceImg, unsigned char* h_mask, int rows, int cols)
+{
+  size_t srcSize = rows * cols;
+
+  for (int i = 0; i < srcSize; ++i) {
+    h_mask[i] = (h_sourceImg[i].x + h_sourceImg[i].y + h_sourceImg[i].z < 3 * 255) ? 1 : 0;
+  }
+
+}
+#endif
+
+#ifdef serial
+void computeBorder_Serial(unsigned char *mask, unsigned char *borderPixels,
+                          unsigned char *interiorPixels,
+                          int numRowsSource, int numColsSource)
+{
+    int sum = 0;
+    for (size_t r = 1; r < numRowsSource - 1; ++r) {
+    for (size_t c = 1; c < numColsSource - 1; ++c) {
+      if (mask[r * numColsSource + c]) {
+        if (mask[(r -1) * numColsSource + c] && mask[(r + 1) * numColsSource + c] &&
+            mask[r * numColsSource + c - 1] && mask[r * numColsSource + c + 1]) {
+          interiorPixels[r * numColsSource + c] = 1;
+          borderPixels[r * numColsSource + c] = 0;
+            sum++;
+          //interiorPixelList.push_back(make_uint2(r, c));
+        }
+        else {
+          //strictInteriorPixels[r * numColsSource + c] = 0;
+          interiorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 1;
+        }
+      }
+      else {
+          //strictInteriorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 0;
+
+      }
+    }
+  }
+    
+    printf("Host cnt: %d \n", sum);
+
+}
+#endif
+
