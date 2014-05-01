@@ -320,6 +320,96 @@ void compare_RGB(unsigned char *cmp_R, unsigned char *cmp_G, unsigned char*cmp_B
   }*/
 
 }
+
+void computeG_serial(const unsigned char* const channel,
+              float* const g,
+              const size_t numColsSource,
+              const std::vector<uint2>& interiorPixelList)
+{
+  for (size_t i = 0; i < interiorPixelList.size(); ++i) {
+    uint2 coord = interiorPixelList[i];
+    unsigned int offset = coord.x * numColsSource + coord.y;
+
+    float sum = 4.f * channel[offset];
+
+    sum -= (float)channel[offset - 1] + (float)channel[offset + 1];
+    sum -= (float)channel[offset + numColsSource] + (float)channel[offset - numColsSource];
+
+    g[offset] = sum;
+  }
+}
+
+void compare_Gs(float *cmp_gR, float *cmp_gG, float *cmp_gB,
+                const uchar4 *h_sourceImg, int numColsSource, int numRowsSource)
+{
+
+  size_t srcSize = numRowsSource * numColsSource;
+  unsigned char* mask = new unsigned char[srcSize];
+
+  for (int i = 0; i < srcSize; ++i) {
+    mask[i] = (h_sourceImg[i].x + h_sourceImg[i].y + h_sourceImg[i].z < 3 * 255) ? 1 : 0;
+  }
+
+  unsigned char *borderPixels = new unsigned char[srcSize];
+  unsigned char *strictInteriorPixels = new unsigned char[srcSize];
+
+  std::vector<uint2> interiorPixelList;
+
+  for (size_t r = 1; r < numRowsSource - 1; ++r) {
+    for (size_t c = 1; c < numColsSource - 1; ++c) {
+      if (mask[r * numColsSource + c]) {
+        if (mask[(r -1) * numColsSource + c] && mask[(r + 1) * numColsSource + c] &&
+            mask[r * numColsSource + c - 1] && mask[r * numColsSource + c + 1]) {
+          strictInteriorPixels[r * numColsSource + c] = 1;
+          borderPixels[r * numColsSource + c] = 0;
+          interiorPixelList.push_back(make_uint2(r, c));
+        }
+        else {
+          strictInteriorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 1;
+        }
+      }
+      else {
+          strictInteriorPixels[r * numColsSource + c] = 0;
+          borderPixels[r * numColsSource + c] = 0;
+
+      }
+    }
+  }
+
+  unsigned char* red_src   = new unsigned char[srcSize];
+  unsigned char* blue_src  = new unsigned char[srcSize];
+  unsigned char* green_src = new unsigned char[srcSize];
+
+  for (int i = 0; i < srcSize; ++i) {
+    red_src[i]   = h_sourceImg[i].x;
+    green_src[i]  = h_sourceImg[i].y;
+    blue_src[i] = h_sourceImg[i].z;
+  }
+
+
+  float *g_red   = new float[srcSize];
+  float *g_blue  = new float[srcSize];
+  float *g_green = new float[srcSize];
+
+  memset(g_red,   0, srcSize * sizeof(float));
+  memset(g_blue,  0, srcSize * sizeof(float));
+  memset(g_green, 0, srcSize * sizeof(float));
+
+  computeG_serial(red_src,   g_red,   numColsSource, interiorPixelList);
+  computeG_serial(blue_src,  g_blue,  numColsSource, interiorPixelList);
+  computeG_serial(green_src, g_green, numColsSource, interiorPixelList);
+
+  for (int i = 0; i < srcSize; i++)
+  {
+    if (g_red[i] != cmp_gR[i])
+      printf("Red unmatched \n");
+    if (g_blue[i] != cmp_gB[i])
+      printf("Blue unmatched \n");
+    if (g_green[i] != cmp_gG[i])
+      printf("Green unmatched \n");
+  }
+}
 #endif
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
@@ -358,7 +448,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
   computeMask<<<gridSize, blockSize>>>(d_sourceImg, d_mask, numRowsSource, numColsSource);
 
-#ifdef serial_code
+#ifdef serial_code1
   unsigned char *cmp_mask = new unsigned char[srcSize];
   cudaMemcpy(cmp_mask, d_mask, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
   compare_mask(cmp_mask, h_sourceImg, srcSize);
@@ -377,7 +467,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   computeBoundary<<<gridSize, blockSize>>>(d_mask, d_borderPixels, d_interiorPixels,
                                            numRowsSource, numColsSource);
   checkCudaErrors(cudaGetLastError());
-#ifdef serial_code
+#ifdef serial_code1
   unsigned char *cmp_interior = new unsigned char[srcSize];
   unsigned char *cmp_border = new unsigned char[srcSize];
   cudaMemcpy(cmp_interior, d_interiorPixels, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
@@ -403,7 +493,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
   seperateChannels<<<gridSize, blockSize>>>(d_destImg, d_RDest, d_GDest, d_BDest, srcSize);
   checkCudaErrors(cudaGetLastError());
-#ifdef serial_code
+#ifdef serial_code1
   unsigned char *cmp_R = new unsigned char[srcSize];
   unsigned char *cmp_G = new unsigned char[srcSize];
   unsigned char *cmp_B = new unsigned char[srcSize];
@@ -433,6 +523,15 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   computeG<<<gridSize, blockSize>>>(d_BSrc, d_gGreen, d_interiorPixels,
                                     numRowsSource, numColsSource);
 
+#ifdef serial_code
+  float *cmp_gR = new float[srcSize];
+  float *cmp_gG = new float[srcSize];
+  float *cmp_gB = new float[srcSize];
+  cudaMemcpy(cmp_gR, d_gRed, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
+  cudaMemcpy(cmp_gG, d_gGreen, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
+  cudaMemcpy(cmp_gB, d_gBlue, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
+  compare_Gs(cmp_gR, cmp_gG, cmp_gB, h_sourceImg, numColsSource, numRowsSource);
+#endif
   }
 
   { //step 4: allocate buffers
