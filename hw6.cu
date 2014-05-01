@@ -287,6 +287,39 @@ void compare_interior_border(unsigned char *cmp_interior, unsigned char *cmp_bor
     }
 
 }
+
+void compare_RGB(unsigned char *cmp_R, unsigned char *cmp_G, unsigned char*cmp_B,
+                 const uchar4 *sourceImg, int srcSize)
+{
+  unsigned char* red_src   = new unsigned char[srcSize];
+  unsigned char* blue_src  = new unsigned char[srcSize];
+  unsigned char* green_src = new unsigned char[srcSize];
+
+  for (int i = 0; i < srcSize; ++i) {
+    red_src[i]   = sourceImg[i].x;
+    green_src[i]  = sourceImg[i].y;
+    blue_src[i] = sourceImg[i].z;
+  }
+
+  for (int i = 0; i < srcSize; ++i) {
+    if (red_src[i] != cmp_R[i])
+      printf("Red unmatched \n");
+    if (green_src[i] != cmp_G[i])
+      printf("Green unmatched \n");
+    if (blue_src[i] != cmp_B[i])
+      printf("Blue unmatched \n");
+  }
+  unsigned char* red_dst   = new unsigned char[srcSize];
+  unsigned char* blue_dst  = new unsigned char[srcSize];
+  unsigned char* green_dst = new unsigned char[srcSize];
+/*
+  for (int i = 0; i < srcSize; ++i) {
+    red_dst[i]   = destImg[i].x;
+    blue_dst[i]  = destImg[i].y;
+    green_dst[i] = destImg[i].z;
+  }*/
+
+}
 #endif
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
@@ -370,6 +403,15 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
   seperateChannels<<<gridSize, blockSize>>>(d_destImg, d_RDest, d_GDest, d_BDest, srcSize);
   checkCudaErrors(cudaGetLastError());
+#ifdef serial_code
+  unsigned char *cmp_R = new unsigned char[srcSize];
+  unsigned char *cmp_G = new unsigned char[srcSize];
+  unsigned char *cmp_B = new unsigned char[srcSize];
+  cudaMemcpy(cmp_R, d_RSrc, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  cudaMemcpy(cmp_G, d_GSrc, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  cudaMemcpy(cmp_B, d_BSrc, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  compare_RGB(cmp_R, cmp_G, cmp_B, h_sourceImg, srcSize);
+#endif
   }
 
   {
