@@ -154,7 +154,7 @@ void computeIteration(unsigned char* d_interiorPixels, unsigned char *d_destImg,
                       int numRows, int numCols)
 {
     int tId = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tId > numRows*numCols)
+    if (tId >= numRows*numCols || (!d_interiorPixels[tId]))
         return;
     float blended_sum = 0.f;
     float border_sum = 0.f;
@@ -339,8 +339,8 @@ void computeG_serial(const unsigned char* const channel,
   }
 }
 
-void compare_Gs(float *cmp_gR, float *cmp_gG, float *cmp_gB,
-                const uchar4 *h_sourceImg, int numColsSource, int numRowsSource)
+void compare_jacobi(float *cmp_buf1, float *cmp_buf2, const uchar4 *h_sourceImg,
+                    const uchar4 *h_destImg, int numColsSource, int numRowsSource)
 {
 
   size_t srcSize = numRowsSource * numColsSource;
@@ -387,6 +387,16 @@ void compare_Gs(float *cmp_gR, float *cmp_gG, float *cmp_gB,
     blue_src[i] = h_sourceImg[i].z;
   }
 
+  unsigned char* red_dst   = new unsigned char[srcSize];
+  unsigned char* blue_dst  = new unsigned char[srcSize];
+  unsigned char* green_dst = new unsigned char[srcSize];
+
+  for (int i = 0; i < srcSize; ++i) {
+    red_dst[i]   = h_destImg[i].x;
+    green_dst[i]  = h_destImg[i].y;
+    blue_dst[i] = h_destImg[i].z;
+  }
+
 
   float *g_red   = new float[srcSize];
   float *g_blue  = new float[srcSize];
@@ -400,7 +410,7 @@ void compare_Gs(float *cmp_gR, float *cmp_gG, float *cmp_gB,
   computeG_serial(blue_src,  g_blue,  numColsSource, interiorPixelList);
   computeG_serial(green_src, g_green, numColsSource, interiorPixelList);
 
-  for (int i = 0; i < srcSize; i++)
+  /*for (int i = 0; i < srcSize; i++)
   {
     if (g_red[i] != cmp_gR[i])
       printf("Red unmatched \n");
@@ -408,7 +418,58 @@ void compare_Gs(float *cmp_gR, float *cmp_gG, float *cmp_gB,
       printf("Blue unmatched \n");
     if (g_green[i] != cmp_gG[i])
       printf("Green unmatched \n");
+  }*/
+  float *blendedValsRed_1 = new float[srcSize];
+  float *blendedValsRed_2 = new float[srcSize];
+
+  float *blendedValsBlue_1 = new float[srcSize];
+  float *blendedValsBlue_2 = new float[srcSize];
+
+  float *blendedValsGreen_1 = new float[srcSize];
+  float *blendedValsGreen_2 = new float[srcSize];
+
+  //IC is the source image, copy over
+  for (size_t i = 0; i < srcSize; ++i) {
+    blendedValsRed_1[i] = red_src[i];
+    blendedValsRed_2[i] = red_src[i];
+    blendedValsBlue_1[i] = blue_src[i];
+    blendedValsBlue_2[i] = blue_src[i];
+    blendedValsGreen_1[i] = green_src[i];
+    blendedValsGreen_2[i] = green_src[i];
   }
+  const size_t numIterations = 800;
+  for (size_t i = 0; i < numIterations; ++i) {
+    computeIteration(red_dst, strictInteriorPixels, borderPixels,
+                     interiorPixelList, numColsSource, blendedValsRed_1, g_red,
+                     blendedValsRed_2);
+
+    std::swap(blendedValsRed_1, blendedValsRed_2);
+  }
+  for (size_t i = 0; i < numIterations; ++i) {
+    computeIteration(green_dst, strictInteriorPixels, borderPixels,
+                     interiorPixelList, numColsSource, blendedValsGreen_1, g_green,
+                     blendedValsGreen_2);
+
+    std::swap(blendedValsGreen_1, blendedValsGreen_2);
+  }
+  for (size_t i = 0; i < numIterations; ++i) {
+    computeIteration(blue_dst, strictInteriorPixels, borderPixels,
+                     interiorPixelList, numColsSource, blendedValsBlue_1, g_blue,
+                     blendedValsBlue_2);
+
+    std::swap(blendedValsBlue_1, blendedValsBlue_2);
+  }
+
+
+  for (int i = 0; i < srcSize; i++)
+  {
+      if (blendedValsBlue_1[i] != cmp_buf1[i])
+          printf("Umatch1 \n");
+      if (blendedValsBlue_2[i] != cmp_buf2[i])
+          printf("Umatch2 \n");
+  }
+
+
 }
 #endif
 
@@ -520,18 +581,9 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                                     numRowsSource, numColsSource);
   computeG<<<gridSize, blockSize>>>(d_GSrc, d_gGreen, d_interiorPixels,
                                     numRowsSource, numColsSource);
-  computeG<<<gridSize, blockSize>>>(d_BSrc, d_gGreen, d_interiorPixels,
+  computeG<<<gridSize, blockSize>>>(d_BSrc, d_gBlue, d_interiorPixels,
                                     numRowsSource, numColsSource);
 
-#ifdef serial_code
-  float *cmp_gR = new float[srcSize];
-  float *cmp_gG = new float[srcSize];
-  float *cmp_gB = new float[srcSize];
-  cudaMemcpy(cmp_gR, d_gRed, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
-  cudaMemcpy(cmp_gG, d_gGreen, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
-  cudaMemcpy(cmp_gB, d_gBlue, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
-  compare_Gs(cmp_gR, cmp_gG, cmp_gB, h_sourceImg, numColsSource, numRowsSource);
-#endif
   }
 
   { //step 4: allocate buffers
@@ -571,6 +623,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                                                       numRowsSource, numColsSource);
             swapBufs<<<gridSize, blockSize>>>(d_GreenBuf1, d_GreenBuf2, srcSize);
         }
+
         for (unsigned int i = 0; i < 800; i++)
         {
             computeIteration<<<gridSize, blockSize>>>(d_interiorPixels, d_BDest,
@@ -578,6 +631,15 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                                                       numRowsSource, numColsSource);
             swapBufs<<<gridSize, blockSize>>>(d_BlueBuf1, d_BlueBuf2, srcSize);
         }
+#ifdef serial_code1
+    float *cmp_buf1 = new float[srcSize];
+    float *cmp_buf2 = new float[srcSize];
+    cudaMemcpy(cmp_buf1, d_BlueBuf1, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
+    cudaMemcpy(cmp_buf2, d_BlueBuf2, sizeof(float) * srcSize, cudaMemcpyDeviceToHost);
+    compare_jacobi(cmp_buf1, cmp_buf2, h_sourceImg,
+                  h_destImg, numColsSource, numRowsSource);
+
+#endif
     }
 
     {
@@ -587,7 +649,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
         blendImages<<<gridSize, blockSize>>>(d_destImg, d_interiorPixels, d_RedBuf1,
                                              d_GreenBuf1, d_BlueBuf1, srcSize);
 
-        cudaMemcpy(h_blendedImg, d_destImg, sizeof(unsigned char) * srcSize,
+        cudaMemcpy(h_blendedImg, d_destImg, sizeof(uchar4) * srcSize,
                    cudaMemcpyDeviceToHost);
 
     }
