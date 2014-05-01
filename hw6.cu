@@ -70,7 +70,7 @@
 
 #include <stdio.h>
 
-#define serial
+#define serial_code
 __global__
 void computeMask(uchar4* d_sourceImage, unsigned char *d_mask, int numRows, int numCols)
 {
@@ -228,6 +228,22 @@ void blendImages(uchar4 *d_destImg, unsigned char *d_interiorPixels,
 
 }
 
+#ifdef serial_code
+void compare_mask(unsigned char *source, const uchar4 *sourceImg, int srcSize)
+{
+  unsigned char *dest = new unsigned char[srcSize];
+  for (int i = 0; i < srcSize; ++i) {
+    dest[i] = (sourceImg[i].x + sourceImg[i].y + sourceImg[i].z < 3 * 255) ? 1 : 0;
+  }
+
+  for (int i = 0; i < srcSize; i++)
+  {
+    if (source[i] != dest[i])
+      printf("Not matching \n");
+  }
+
+}
+#endif
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
@@ -264,6 +280,12 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   dim3 blockSize(1024, 1, 1);
   dim3 gridSize((numRowsSource*numColsSource + 1024-1)/1024, 1, 1);
   computeMask<<<gridSize, blockSize>>>(d_sourceImg, d_mask, numRowsSource, numColsSource);
+
+#ifdef serial_code
+  unsigned char *cmp_mask = new unsigned char[srcSize];
+  cudaMemcpy(cmp_mask, d_mask, sizeof(unsigned char) * srcSize, cudaMemcpyDeviceToHost);
+  compare_mask(cmp_mask, h_sourceImg, srcSize);
+#endif
   }
 
   { //step2: compute interior and border pixels
