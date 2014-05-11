@@ -82,11 +82,22 @@ void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
     unsigned int mask, val, index;
     __shared__ int cnt0, cnt1, cnt2, cnt3; //operating on 2-bit. Hence 4 combinations
 
+    extern __shared__ int s_data[];
+    int *s_presum0 = (int *)s_data;
+    int *s_presum1 = (int *)(&s_data[blockDim.x]);
+    int *s_presum2 = (int *)(&s_data[2*blockDim.x]);
+    int *s_presum3 = (int *)(&s_data[3*blockDim.x]);
+
     if (tId >= numElem)
         return;
 
     if (tId == 0)
       cnt0 = cnt1 = cnt2 = cnt3 = 0;
+
+    s_presum0[threadIdx.x] = 0;
+    s_presum1[threadIdx.x] = 0;
+    s_presum2[threadIdx.x] = 0;
+    s_presum3[threadIdx.x] = 0;
 
     __syncthreads();
     mask = 3 << shift;
@@ -95,28 +106,30 @@ void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
     {
         case 0:
             atomicAdd(&cnt0, 1);
+            s_presum0[threadIdx.x] = 1;
         break;
 
         case 1:
             atomicAdd(&cnt1, 1);
+            s_presum1[threadIdx.x] = 1;
         break;
 
         case 2:
             atomicAdd(&cnt2, 1);
+            s_presum2[threadIdx.x] = 1;
         break;
 
         case 3:
             atomicAdd(&cnt3, 1);
-
+            s_presum3[threadIdx.x] = 1;
     }
-
     __syncthreads();
     if (tId == 0)
     {
-        atomicsAdd(&d_gPSum[0], cnt0);
-        atomicsAdd(&d_gPSum[1], cnt1);
-        atomicsAdd(&d_gPSum[2], cnt2);
-        atomicsAdd(&d_gPSum[3], cnt3);
+        atomicAdd(&d_gPSum[0], cnt0);
+        atomicAdd(&d_gPSum[1], cnt1);
+        atomicAdd(&d_gPSum[2], cnt2);
+        atomicAdd(&d_gPSum[3], cnt3);
 
         d_cnt0s[blockIdx.x] = cnt0;
         d_cnt1s[blockIdx.x] = cnt1;
@@ -148,7 +161,7 @@ void your_sort(unsigned int* const d_inputVals,
 {
      unsigned int numBits = 2;
      unsigned int numBins = 1 << numBits;
-     int *d_blockwise0s, *d_blockwise1s, *d_blockwise2s, *d_blockwise3s,
+     int *d_blockwise0s, *d_blockwise1s, *d_blockwise2s, *d_blockwise3s;
      int *d_localPrefixSum, *d_globalPrefixSum;
      int *h_binsPrefixSum;
 
@@ -170,24 +183,19 @@ void your_sort(unsigned int* const d_inputVals,
      {
          checkCudaErrors(cudaMemset(d_globalPrefixSum, 0,  sizeof(int) * numBins));
          checkCudaErrors(cudaMemset(d_localPrefixSum, 0,  sizeof(int) * numElems));
-         checkCudaErrors(cudaMemset(d_blockwise0s, 0,  sizeof(int) * grdiSize.x));
-         checkCudaErrors(cudaMemset(d_blockwise1s, 0,  sizeof(int) * grdiSize.x));
-         checkCudaErrors(cudaMemset(d_blockwis2s, 0,  sizeof(int) * grdiSize.x));
-         checkCudaErrors(cudaMemset(d_blockwise3s, 0,  sizeof(int) * grdiSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise0s, 0,  sizeof(int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise1s, 0,  sizeof(int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise2s, 0,  sizeof(int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise3s, 0,  sizeof(int) * gridSize.x));
 
-         getCounts<<<gridSize.x, blockSize>>>(d_inputVals, d_globalPrefixSum, d_blockwise0s,
+         getCounts<<<gridSize, blockSize, sizeof(int) * blockSize.x * 4>>>
+                                             (d_inputVals, d_globalPrefixSum, d_blockwise0s,
                                               d_blockwise1s, d_blockwise2s, d_blockwise3s,
                                               numElems, numBins, i);
-         performParallelPrefixSum<<<numBins, (numElems + blockSize.x - 1)/blockSize.x,
+         /*performParallelPrefixSum<<<numBins, (numElems + blockSize.x - 1)/blockSize.x,
                                    2 * sizeof(int) * (numElems + blockSize.x - 1)/blockSize.x>>>
-                                  (d_globalHisto, d_globalPrefixSum);
+                                  (d_globalHisto, d_globalPrefixSum);*/
 
-        #if 0
-         memset(h_binsPrefixSum, 0, sizeof(int) * numBins);
-         checkCudaErrors(cudaMemcpy(h_binsPrefixSum, d_globalBins, sizeof(int) * numBins,
-                                    cudaMemcpyDeviceToHost));
-         performSerialPrefixSum(h_binsPrefixSum, numBins);
-        #endif
          //scatterElements<<<>>>
      }
      checkCudaErrors(cudaFree(d_globalPrefixSum));
