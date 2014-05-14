@@ -46,7 +46,7 @@
 
 
 __global__
-void performParallelPrefixSum(int * const d_input, int * d_output)
+void performParallelPrefixSum(unsigned int *d_input, int numElem)
 {
     int tId = threadIdx.x;
     extern __shared__ int shdata[];
@@ -54,6 +54,8 @@ void performParallelPrefixSum(int * const d_input, int * d_output)
     int *sdataOut = (int *)(&shdata[blockDim.x]);
     int step;
 
+    if (tId >= numElem)
+        return;
     sdataIn[tId] = d_input[tId];
     sdataOut[tId] = sdataIn[tId];
     __syncthreads();
@@ -68,13 +70,14 @@ void performParallelPrefixSum(int * const d_input, int * d_output)
         sdataIn[tId] = sdataOut[tId];
         __syncthreads();
     }
-    d_output[tId] = sdataIn[tId];
+    d_input[tId] = sdataIn[tId];
 }
 
 
 __global__
-void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
-               int *d_cnt0s, int *d_cnt1s, int *d_cnt2s, int *d_cnt3s,
+void getCounts(unsigned int * const d_inputVals, unsigned int * d_gPSum,
+               unsigned int *d_cnt0s, unsigned int *d_cnt1s, unsigned int *d_cnt2s, unsigned int *d_cnt3s,
+               unsigned int *d_presum0, unsigned int *d_presum1, unsigned int *d_presum2, unsigned int *d_presum3,
                int numElem, int numBins, int shift)
 {
 
@@ -82,23 +85,23 @@ void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
     unsigned int mask, val, index;
     __shared__ int cnt0, cnt1, cnt2, cnt3; //operating on 2-bit. Hence 4 combinations
 
-    extern __shared__ int s_data[];
+/*    extern __shared__ int s_data[];
     int *s_presum0 = (int *)s_data;
     int *s_presum1 = (int *)(&s_data[blockDim.x]);
     int *s_presum2 = (int *)(&s_data[2*blockDim.x]);
     int *s_presum3 = (int *)(&s_data[3*blockDim.x]);
-
+*/
     if (tId >= numElem)
         return;
 
     if (tId == 0)
       cnt0 = cnt1 = cnt2 = cnt3 = 0;
 
-    s_presum0[threadIdx.x] = 0;
+  /*  s_presum0[threadIdx.x] = 0;
     s_presum1[threadIdx.x] = 0;
     s_presum2[threadIdx.x] = 0;
     s_presum3[threadIdx.x] = 0;
-
+    */
     __syncthreads();
     mask = 3 << shift;
     val = mask & d_inputVals[tId] >> shift;
@@ -106,22 +109,22 @@ void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
     {
         case 0:
             atomicAdd(&cnt0, 1);
-            s_presum0[threadIdx.x] = 1;
+            d_presum0[tId] = 1;
         break;
 
         case 1:
             atomicAdd(&cnt1, 1);
-            s_presum1[threadIdx.x] = 1;
+            d_presum1[tId] = 1;
         break;
 
         case 2:
             atomicAdd(&cnt2, 1);
-            s_presum2[threadIdx.x] = 1;
+            d_presum2[tId] = 1;
         break;
 
         case 3:
             atomicAdd(&cnt3, 1);
-            s_presum3[threadIdx.x] = 1;
+            d_presum3[tId] = 1;
     }
     __syncthreads();
     if (tId == 0)
@@ -137,6 +140,66 @@ void getCounts(unsigned int * const d_inputVals, int * d_gPSum,
         d_cnt3s[blockIdx.x] = cnt3;
     }
 }
+
+__global__
+void scatter(unsigned int *d_inputVals, unsigned int *d_inputPos, unsigned int *d_globalPrefixSum,
+             unsigned int *d_blockwise0s, unsigned int *d_blockwise1s, unsigned int *d_blockwise2s, unsigned int *d_blockwise3s,
+             unsigned int *d_lPrefixSum0, unsigned int *d_lPrefixSum1, unsigned int *d_lPrefixSum2, unsigned int *d_lPrefixSum3,
+             unsigned int *d_ovals, unsigned int *d_opos,
+             int numElem, int shift)
+{
+    int tId = blockIdx.x * blockDim.x + threadIdx.x;
+    int mask, val, new_index;
+
+    if (tId >= numElem)
+        return;
+    mask = 3 << shift;
+    val = (mask & d_inputVals[tId]) >> shift;
+  //  printf("%d\n", val);
+    #if 1
+    switch (0)
+    {
+        case 0:
+            new_index =  d_blockwise0s[blockIdx.x] + d_lPrefixSum0[threadIdx.x];
+            //new_index =   0;//d_blockwise0s[0];
+        break;
+
+        case 1:
+            new_index =  d_blockwise1s[blockIdx.x] + d_lPrefixSum1[threadIdx.x];
+            //new_index =  0;//d_blockwise1s[0];
+        break;
+
+        case 2:
+            new_index =  d_blockwise2s[blockIdx.x] + d_lPrefixSum2[threadIdx.x];
+            //new_index =  0;//d_blockwise2s[0];
+        break;
+
+        case 3:
+            //new_index =  d_blockwise3s[blockIdx.x] + d_lPrefixSum3[threadIdx.x];
+            new_index = 0;//d_blockwise3s[0];
+            break;
+        default:
+            printf("%d\n",val);
+    }
+    #endif
+    new_index += d_globalPrefixSum[val];
+    d_ovals[new_index] = d_inputVals[tId];
+    d_opos[new_index] = d_inputPos[tId];
+
+}
+
+__global__
+void mycopy(unsigned int *d_inputVals, unsigned int *d_inputPos,
+            unsigned int *d_outputVals, unsigned int *d_outputPos, int numElem)
+{
+    int tId = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tId >= numElem)
+        return;
+    d_outputVals[tId] = d_inputVals[tId];
+    d_outputPos[tId] = d_inputPos[tId];
+}
+
 
 void performSerialPrefixSum(int *h_globalPrefixSum, int numBins)
 {
@@ -161,49 +224,116 @@ void your_sort(unsigned int* const d_inputVals,
 {
      unsigned int numBits = 2;
      unsigned int numBins = 1 << numBits;
-     int *d_blockwise0s, *d_blockwise1s, *d_blockwise2s, *d_blockwise3s;
-     int *d_localPrefixSum, *d_globalPrefixSum;
-     int *h_binsPrefixSum;
+     unsigned int *d_blockwise0s, *d_blockwise1s, *d_blockwise2s, *d_blockwise3s;
+     unsigned int *d_lPrefixSum0, *d_lPrefixSum1, *d_lPrefixSum2, *d_lPrefixSum3;
+     unsigned int *d_globalPrefixSum;
+     unsigned int *h_globalPrefixSum;
+     unsigned int *d_ipVals, *d_ipPos, *d_opVals, *d_opPos;
 
+     /*unsigned int *h_inputVals = (unsigned int*)malloc(sizeof(unsigned int)*numElems);;
+     cudaMemcpy(h_inputVals, d_inputVals, sizeof(unsigned int)*numElems, cudaMemcpyDeviceToHost);
+     for (unsigned int z = 0; z < 8 * sizeof(unsigned int); z = z + 2)
+     {
+
+         int mask = 3 << z;
+         for (int t = 0; t < numElems; t++)
+         {
+
+            int val = (mask & h_inputVals[t]) >> z;
+            if (val > 3)
+                printf("%d\n", val);
+         }
+     }
+     return;*/
      dim3 blockSize(1024, 1, 1);
      dim3 gridSize((numElems + blockSize.x - 1)/blockSize.x, 1, 1);
      printf("Elements: %d BlockDim: %d NumBlocks: %d\n", numElems, blockSize.x,
                                       (numElems + blockSize.x - 1)/blockSize.x);
 
-     checkCudaErrors(cudaMalloc((void **)&d_blockwise0s, sizeof(int) * gridSize.x ));
-     checkCudaErrors(cudaMalloc((void **)&d_blockwise1s, sizeof(int) * gridSize.x ));
-     checkCudaErrors(cudaMalloc((void **)&d_blockwise2s, sizeof(int) * gridSize.x ));
-     checkCudaErrors(cudaMalloc((void **)&d_blockwise3s, sizeof(int) * gridSize.x ));
-     checkCudaErrors(cudaMalloc((void **)&d_globalPrefixSum, sizeof(int) * numBins));
-     checkCudaErrors(cudaMalloc((void **)&d_localPrefixSum, sizeof(int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_blockwise0s, sizeof(unsigned int) * gridSize.x ));
+     checkCudaErrors(cudaMalloc((void **)&d_blockwise1s, sizeof(unsigned int) * gridSize.x ));
+     checkCudaErrors(cudaMalloc((void **)&d_blockwise2s, sizeof(unsigned int) * gridSize.x ));
+     checkCudaErrors(cudaMalloc((void **)&d_blockwise3s, sizeof(unsigned int) * gridSize.x ));
+     checkCudaErrors(cudaMalloc((void **)&d_globalPrefixSum, sizeof(unsigned int) * numBins));
+     checkCudaErrors(cudaMalloc((void **)&d_lPrefixSum0, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_lPrefixSum1, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_lPrefixSum2, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_lPrefixSum3, sizeof(unsigned int) * numElems));
 
-     h_binsPrefixSum = (int *)malloc(sizeof(int) * numBins);
+     checkCudaErrors(cudaMalloc((void **)&d_ipVals, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_ipPos, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_opVals, sizeof(unsigned int) * numElems));
+     checkCudaErrors(cudaMalloc((void **)&d_opPos, sizeof(unsigned int) * numElems));
+
+     h_globalPrefixSum = (unsigned int *)malloc(sizeof(unsigned int) * numBins);
 
      for (unsigned int i = 0; i < 8 * sizeof(unsigned int); i = i + numBits)
      {
-         checkCudaErrors(cudaMemset(d_globalPrefixSum, 0,  sizeof(int) * numBins));
-         checkCudaErrors(cudaMemset(d_localPrefixSum, 0,  sizeof(int) * numElems));
-         checkCudaErrors(cudaMemset(d_blockwise0s, 0,  sizeof(int) * gridSize.x));
-         checkCudaErrors(cudaMemset(d_blockwise1s, 0,  sizeof(int) * gridSize.x));
-         checkCudaErrors(cudaMemset(d_blockwise2s, 0,  sizeof(int) * gridSize.x));
-         checkCudaErrors(cudaMemset(d_blockwise3s, 0,  sizeof(int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_globalPrefixSum, 0,  sizeof(unsigned int) * numBins));
+         checkCudaErrors(cudaMemset(d_lPrefixSum0, 0,  sizeof(unsigned int) * numElems));
+         checkCudaErrors(cudaMemset(d_lPrefixSum1, 0,  sizeof(unsigned int) * numElems));
+         checkCudaErrors(cudaMemset(d_lPrefixSum2, 0,  sizeof(unsigned int) * numElems));
+         checkCudaErrors(cudaMemset(d_lPrefixSum3, 0,  sizeof(unsigned int) * numElems));
+         checkCudaErrors(cudaMemset(d_blockwise0s, 0,  sizeof(unsigned int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise1s, 0,  sizeof(unsigned int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise2s, 0,  sizeof(unsigned int) * gridSize.x));
+         checkCudaErrors(cudaMemset(d_blockwise3s, 0,  sizeof(unsigned int) * gridSize.x));
 
-         getCounts<<<gridSize, blockSize, sizeof(int) * blockSize.x * 4>>>
-                                             (d_inputVals, d_globalPrefixSum, d_blockwise0s,
-                                              d_blockwise1s, d_blockwise2s, d_blockwise3s,
-                                              numElems, numBins, i);
-         /*performParallelPrefixSum<<<numBins, (numElems + blockSize.x - 1)/blockSize.x,
-                                   2 * sizeof(int) * (numElems + blockSize.x - 1)/blockSize.x>>>
-                                  (d_globalHisto, d_globalPrefixSum);*/
+         checkCudaErrors(cudaMemset(d_opVals, 0,  sizeof(unsigned int) * numElems));
+         checkCudaErrors(cudaMemset(d_opPos, 0,  sizeof(unsigned int) * numElems));
+         getCounts<<<gridSize, blockSize>>>(d_inputVals, d_globalPrefixSum, d_blockwise0s,
+                                            d_blockwise1s, d_blockwise2s, d_blockwise3s,
+                                            d_lPrefixSum0, d_lPrefixSum1, d_lPrefixSum2, d_lPrefixSum3,
+                                            numElems, numBins, i);
+         performParallelPrefixSum<<<gridSize, blockSize, 2 * sizeof(unsigned int) * blockSize.x>>>(d_lPrefixSum0, numElems);
+         performParallelPrefixSum<<<gridSize, blockSize, 2 * sizeof(unsigned int) * blockSize.x>>>(d_lPrefixSum1, numElems);
+         performParallelPrefixSum<<<gridSize, blockSize, 2 * sizeof(unsigned int) * blockSize.x>>>(d_lPrefixSum2, numElems);
+         performParallelPrefixSum<<<gridSize, blockSize, 2 * sizeof(unsigned int) * blockSize.x>>>(d_lPrefixSum3, numElems);
 
-         //scatterElements<<<>>>
+         performParallelPrefixSum<<<1, gridSize, 2 * sizeof(unsigned int) * gridSize.x>>>
+                                  (d_blockwise0s, 10000);
+         performParallelPrefixSum<<<1, gridSize, 2 * sizeof(unsigned int) * gridSize.x>>>
+                                  (d_blockwise1s, 10000);
+         performParallelPrefixSum<<<1, gridSize, 2 * sizeof(unsigned int) * gridSize.x>>>
+                                  (d_blockwise2s, 10000);
+         performParallelPrefixSum<<<1, gridSize, 2 * sizeof(unsigned int) * gridSize.x>>>
+                                  (d_blockwise3s, 10000);
+
+         cudaMemcpy(h_globalPrefixSum, d_globalPrefixSum, sizeof(unsigned int) * numBins, cudaMemcpyDeviceToHost);
+         unsigned int *h_temp = (unsigned int *)malloc(sizeof(unsigned int) * numBins);
+         memset(h_temp, 0, sizeof(unsigned int) * numBins);
+         for (int j = 1; j < numBins; j++)
+            h_temp[j] = h_temp[j-1] + h_globalPrefixSum[j-1];
+
+         cudaMemcpy(d_globalPrefixSum, h_temp, sizeof(unsigned int) * numBins, cudaMemcpyHostToDevice);
+         mycopy<<<gridSize, blockSize>>>(d_inputVals, d_inputPos, d_ipVals, d_ipPos, numElems);
+         scatter<<<gridSize, blockSize>>>(d_ipVals, d_ipPos, d_globalPrefixSum, d_blockwise0s,
+                                           d_blockwise1s, d_blockwise2s, d_blockwise3s,
+                                          d_lPrefixSum0, d_lPrefixSum1, d_lPrefixSum2, d_lPrefixSum3,
+                                          d_opVals, d_opPos,
+                                          numElems, i);
+        unsigned int *d_temp;
+        d_temp = d_opVals;
+        d_opVals = d_ipVals;
+        d_ipVals = d_temp;
+
+        d_temp = d_opPos;
+        d_opPos = d_ipPos;
+        d_ipPos = d_temp;
+
      }
+     mycopy<<<gridSize, blockSize>>>(d_ipVals, d_ipPos, d_outputVals, d_outputPos, numElems);
      checkCudaErrors(cudaFree(d_globalPrefixSum));
-     checkCudaErrors(cudaFree(d_localPrefixSum));
+     checkCudaErrors(cudaFree(d_lPrefixSum0));
+     checkCudaErrors(cudaFree(d_lPrefixSum1));
+     checkCudaErrors(cudaFree(d_lPrefixSum2));
+     checkCudaErrors(cudaFree(d_lPrefixSum3));
      checkCudaErrors(cudaFree(d_blockwise0s));
      checkCudaErrors(cudaFree(d_blockwise1s));
      checkCudaErrors(cudaFree(d_blockwise2s));
      checkCudaErrors(cudaFree(d_blockwise3s));
-     free(h_binsPrefixSum);
+     //checkCudaErrors(cudaFree(d_ipVals));
+     //checkCudaErrors(cudaFree(d_ipPos));
+     //free(h_binsPrefixSum);
 }
 
